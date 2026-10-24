@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: goldlab-backtester
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
