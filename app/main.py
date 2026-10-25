@@ -204,3 +204,4 @@ def manual_trade(payload: dict):
     if action not in {"buy", "sell", "close"}:
         raise HTTPException(400, "Aksi harus buy, sell, atau close.")
     return {"accepted": True, "action": action, "message": "Aksi valid. Versi MVP menyimpan jurnal manual di browser; belum ada penyimpanan akun lintas perangkat."}
+Default = asgi.entrypoint(app)
