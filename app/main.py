@@ -1,208 +1,651 @@
-import os
+
 from datetime import date
 from typing import Literal
+
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from workers import asgi
 
-app = FastAPI(title="GoldLab Backtester", version="0.1.0")
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app = FastAPI(
+    title="GoldLab Backtester",
+    version="1.0.0",
+)
 
-SYMBOLS = {"XAU/USD", "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "NZD/USD", "USD/CHF", "EUR/JPY", "GBP/JPY"}
-INTERVALS = {"1min", "5min", "15min", "30min", "1h", "2h", "4h", "1day"}
 
-class BacktestRequest(BaseModel):
-    symbol: str = "XAU/USD"
-    interval: str = "5min"
-    start_date: date
-    end_date: date
-    strategy: Literal["ema_crossover", "rsi"] = "ema_crossover"
-    initial_balance: float = Field(default=1000, gt=0)
-    fast_ema: int = Field(default=9, ge=2, le=200)
-    slow_ema: int = Field(default=21, ge=3, le=500)
-    rsi_period: int = Field(default=14, ge=2, le=100)
-    spread: float = Field(default=0.0, ge=0)
-    commission_per_trade: float = Field(default=0.0, ge=0)
+# ==========================================
+# KONFIGURASI CLOUDFLARE
+# ==========================================
+
+def get_env(request: Request):
+    return request.scope.get("env")
+
+
+def get_api_key(request: Request) -> str:
+    env = get_env(request)
+    if env is None:
+        return ""
+    return str(
+        getattr(env, "TWELVE_DATA_API_KEY", "") or ""
+    ).strip()
+
+
+async def fetch_asset(request: Request, path: str):
+    env = get_env(request)
+
+    if env is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Environment Cloudflare tidak tersedia.",
+        )
+
+    assets = getattr(env, "ASSETS", None)
+
+    if assets is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Binding ASSETS belum dikonfigurasi.",
+        )
+
+    safe_path = path.lstrip("/")
+
+    if not safe_path:
+        safe_path = "index.html"
+
+    response = await assets.fetch(
+        f"https://assets.local/{safe_path}"
+    )
+
+    return Response(
+        content=await response.bytes(),
+        status_code=response.status,
+        headers={
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in {
+                "content-length",
+                "content-encoding",
+                "transfer-encoding",
+            }
+        },
+    )
+
+
+# ==========================================
+# HALAMAN WEBSITE
+# ==========================================
 
 @app.get("/")
-def home():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+async def home(request: Request):
+    return await fetch_asset(request, "index.html")
+
+
+@app.get("/static/{path:path}")
+async def static_files(path: str, request: Request):
+    return await fetch_asset(request, path)
+
+
+@app.get("/favicon.ico")
+async def favicon(request: Request):
+    try:
+        return await fetch_asset(request, "favicon.ico")
+    except HTTPException:
+        return Response(status_code=204)
+
 
 @app.get("/api/health")
-def health():
-    return {"ok": True, "service": "GoldLab Backtester", "api_key_configured": bool(API_KEY)}
+def health(request: Request):
+    return {
+        "ok": True,
+        "service": "GoldLab Backtester",
+        "api_key_configured": bool(get_api_key(request)),
+    }
+
 
 @app.get("/api/config")
-def config():
-    return {"symbols": sorted(SYMBOLS), "intervals": sorted(INTERVALS), "strategies": [
-        {"id": "ema_crossover", "name": "EMA Crossover"},
-        {"id": "rsi", "name": "RSI Reversal"}
-    ], "api_key_configured": bool(API_KEY)}
+def config(request: Request):
+    return {
+        "symbols": [
+            "XAU/USD",
+            "EUR/USD",
+            "GBP/USD",
+            "USD/JPY",
+            "AUD/USD",
+            "USD/CAD",
+            "NZD/USD",
+            "USD/CHF",
+            "EUR/JPY",
+            "GBP/JPY",
+        ],
+        "intervals": [
+            "1min",
+            "5min",
+            "15min",
+            "30min",
+            "1h",
+            "2h",
+            "4h",
+            "1day",
+        ],
+        "api_key_configured": bool(get_api_key(request)),
+    }
+
+
+# ==========================================
+# VALIDASI BACKTEST
+# ==========================================
+
+class BacktestRequest(BaseModel):
+    symbol: Literal[
+        "XAU/USD",
+        "EUR/USD",
+        "GBP/USD",
+        "USD/JPY",
+        "AUD/USD",
+        "USD/CAD",
+        "NZD/USD",
+        "USD/CHF",
+        "EUR/JPY",
+        "GBP/JPY",
+    ] = "XAU/USD"
+
+    interval: Literal[
+        "1min",
+        "5min",
+        "15min",
+        "30min",
+        "1h",
+        "2h",
+        "4h",
+        "1day",
+    ] = "5min"
+
+    start_date: date
+    end_date: date
+
+    strategy: Literal[
+        "ema_crossover",
+        "rsi",
+    ] = "ema_crossover"
+
+    initial_balance: float = Field(
+        default=10000,
+        gt=0,
+        le=100000000,
+    )
+
+    fast_ema: int = Field(
+        default=9,
+        ge=2,
+        le=100,
+    )
+
+    slow_ema: int = Field(
+        default=21,
+        ge=3,
+        le=300,
+    )
+
+    rsi_period: int = Field(
+        default=14,
+        ge=2,
+        le=100,
+    )
+
+    spread: float = Field(
+        default=0.3,
+        ge=0,
+        le=1000,
+    )
+
+    commission: float = Field(
+        default=0,
+        ge=0,
+        le=10000,
+    )
+
+
+# ==========================================
+# MENGAMBIL DATA TWELVE DATA
+# ==========================================
 
 @app.get("/api/data")
-async def get_data(symbol: str = "XAU/USD", interval: str = "5min",
-                   start_date: date = date(2026, 1, 1), end_date: date = date(2026, 1, 31)):
-    symbol = symbol.strip().upper()
-    if symbol not in SYMBOLS:
-        raise HTTPException(400, "Simbol belum didukung pada MVP ini.")
-    if interval not in INTERVALS:
-        raise HTTPException(400, "Timeframe tidak valid.")
-    if start_date > end_date:
-        raise HTTPException(400, "Tanggal mulai harus sebelum atau sama dengan tanggal selesai.")
-    if not API_KEY:
-        raise HTTPException(503, "API key belum dikonfigurasi. Tambahkan TWELVE_DATA_API_KEY di Environment Variables hosting.")
-    params = {
-        "symbol": symbol, "interval": interval,
-        "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
-        "timezone": "UTC", "apikey": API_KEY
+async def get_data(
+    request: Request,
+    symbol: str = "XAU/USD",
+    interval: str = "5min",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    outputsize: int = 5000,
+):
+    allowed_symbols = {
+        "XAU/USD",
+        "EUR/USD",
+        "GBP/USD",
+        "USD/JPY",
+        "AUD/USD",
+        "USD/CAD",
+        "NZD/USD",
+        "USD/CHF",
+        "EUR/JPY",
+        "GBP/JPY",
     }
-    try:
-        async with httpx.AsyncClient(timeout=35) as client:
-            response = await client.get("https://api.twelvedata.com/time_series", params=params)
-        payload = response.json()
-    except (httpx.HTTPError, ValueError):
-        raise HTTPException(502, "Tidak dapat menghubungi Twelve Data. Coba lagi nanti.")
-    if response.status_code >= 400 or payload.get("status") == "error" or "values" not in payload:
-        message = payload.get("message", "Data tidak tersedia atau paket API tidak mengizinkan permintaan ini.")
-        # Avoid reflecting key or request URL to the client.
-        raise HTTPException(502, f"Twelve Data: {message}")
-    candles = []
-    bad = 0
-    for item in payload.get("values", []):
-        try:
-            dt = item["datetime"]
-            o, h, l, c = [float(item[k]) for k in ("open", "high", "low", "close")]
-            if not all(map(lambda x: x == x and abs(x) != float("inf"), [o,h,l,c])): raise ValueError()
-            if min(o,h,l,c) <= 0 or h < max(o,l,c) or l > min(o,h,c): raise ValueError()
-            candles.append({"time": dt, "open": o, "high": h, "low": l, "close": c})
-        except (KeyError, TypeError, ValueError):
-            bad += 1
-    # API commonly returns newest first; strategy engine expects oldest first.
-    candles.sort(key=lambda x: x["time"])
-    deduped = []
-    seen = set()
-    for candle in candles:
-        if candle["time"] not in seen:
-            deduped.append(candle); seen.add(candle["time"])
-    if not deduped:
-        raise HTTPException(502, "Tidak ada candle valid pada periode tersebut.")
-    return {"symbol": symbol, "interval": interval, "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(), "count": len(deduped), "invalid_rows_skipped": bad,
-            "data_source": "Twelve Data", "candles": deduped,
-            "note": "Cek batas data, credits, dan entitlement paket Twelve Data. Respons historis dapat dibatasi provider."}
 
-def ema(values, period):
-    result = [None] * len(values)
-    if len(values) < period: return result
+    allowed_intervals = {
+        "1min",
+        "5min",
+        "15min",
+        "30min",
+        "1h",
+        "2h",
+        "4h",
+        "1day",
+    }
+
+    if symbol not in allowed_symbols:
+        raise HTTPException(
+            status_code=400,
+            detail="Simbol tidak didukung.",
+        )
+
+    if interval not in allowed_intervals:
+        raise HTTPException(
+            status_code=400,
+            detail="Timeframe tidak didukung.",
+        )
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="Tanggal mulai melebihi tanggal akhir.",
+        )
+
+    api_key = get_api_key(request)
+
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "API key belum dikonfigurasi. "
+                "Tambahkan TWELVE_DATA_API_KEY "
+                "di Secrets Cloudflare."
+            ),
+        )
+
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "outputsize": max(1, min(outputsize, 5000)),
+        "apikey": api_key,
+        "format": "JSON",
+        "timezone": "UTC",
+    }
+
+    if start_date:
+        params["start_date"] = start_date.isoformat()
+
+    if end_date:
+        params["end_date"] = end_date.isoformat()
+
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            response = await client.get(
+                "https://api.twelvedata.com/time_series",
+                params=params,
+            )
+
+        response.raise_for_status()
+        data = response.json()
+
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Permintaan data Twelve Data melewati batas waktu.",
+        )
+
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=502,
+            detail="Gagal menghubungi penyedia data.",
+        )
+
+    if data.get("status") == "error" or data.get("code"):
+        message = str(
+            data.get("message", "Penyedia data menolak permintaan.")
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=message,
+        )
+
+    values = data.get("values")
+
+    if not isinstance(values, list):
+        raise HTTPException(
+            status_code=502,
+            detail="Data candle tidak tersedia dari penyedia.",
+        )
+
+    candles = []
+
+    for item in reversed(values):
+        try:
+            candles.append({
+                "time": item["datetime"],
+                "open": float(item["open"]),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "count": len(candles),
+        "source": "Twelve Data",
+        "candles": candles,
+    }
+
+
+# ==========================================
+# PERHITUNGAN EMA DAN RSI
+# ==========================================
+
+def calculate_ema(values: list[float], period: int):
+    if not values:
+        return []
+
     alpha = 2 / (period + 1)
-    seed = sum(values[:period]) / period
-    result[period-1] = seed
-    current = seed
-    for i in range(period, len(values)):
-        current = values[i] * alpha + current * (1-alpha)
-        result[i] = current
+    result = [values[0]]
+
+    for value in values[1:]:
+        result.append(
+            value * alpha + result[-1] * (1 - alpha)
+        )
+
     return result
 
-def rsi(values, period):
-    out = [None] * len(values)
-    if len(values) <= period: return out
-    gains = [max(values[i]-values[i-1], 0) for i in range(1, len(values))]
-    losses = [max(values[i-1]-values[i], 0) for i in range(1, len(values))]
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    def calc(g, l):
-        if l == 0: return 100.0 if g > 0 else 50.0
-        return 100 - 100/(1 + g/l)
-    out[period] = calc(avg_gain, avg_loss)
-    for i in range(period+1, len(values)):
-        avg_gain = (avg_gain*(period-1) + gains[i-1]) / period
-        avg_loss = (avg_loss*(period-1) + losses[i-1]) / period
-        out[i] = calc(avg_gain, avg_loss)
-    return out
 
-def run_engine(req, candles):
-    if len(candles) < 30:
-        raise HTTPException(400, "Data terlalu sedikit untuk backtest. Pilih periode lebih panjang atau timeframe lebih kecil.")
+def calculate_rsi(values: list[float], period: int):
+    result = [50.0] * len(values)
+
+    for i in range(period, len(values)):
+        gains = 0.0
+        losses = 0.0
+
+        for j in range(i - period + 1, i + 1):
+            change = values[j] - values[j - 1]
+
+            if change > 0:
+                gains += change
+            else:
+                losses -= change
+
+        if losses == 0:
+            result[i] = 100.0 if gains > 0 else 50.0
+        else:
+            relative_strength = gains / losses
+            result[i] = (
+                100 - 100 / (1 + relative_strength)
+            )
+
+    return result
+
+
+# ==========================================
+# MESIN BACKTEST SEDERHANA
+# ==========================================
+
+def run_engine(req: BacktestRequest, candles: list[dict]):
+    if len(candles) < max(
+        30,
+        req.fast_ema,
+        req.slow_ema,
+        req.rsi_period,
+    ) + 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Jumlah candle tidak cukup untuk backtest.",
+        )
+
+    if req.fast_ema >= req.slow_ema:
+        raise HTTPException(
+            status_code=400,
+            detail="EMA cepat harus lebih kecil dari EMA lambat.",
+        )
+
     closes = [c["close"] for c in candles]
-    fast = ema(closes, req.fast_ema)
-    slow = ema(closes, req.slow_ema)
-    rsis = rsi(closes, req.rsi_period)
+
+    fast = calculate_ema(closes, req.fast_ema)
+    slow = calculate_ema(closes, req.slow_ema)
+    rsi_values = calculate_rsi(closes, req.rsi_period)
+
     balance = req.initial_balance
-    equity_peak = balance
-    max_dd = 0.0
-    position = None
-    trades = []
     equity = []
-    # One unit position for transparent MVP. No leverage/lot sizing in this first version.
-    for i, candle in enumerate(candles):
-        signal = None
-        if req.strategy == "ema_crossover" and i > 0 and fast[i] is not None and slow[i] is not None and fast[i-1] is not None and slow[i-1] is not None:
-            if fast[i-1] <= slow[i-1] and fast[i] > slow[i]: signal = "buy"
-            elif fast[i-1] >= slow[i-1] and fast[i] < slow[i]: signal = "sell"
-        elif req.strategy == "rsi" and rsis[i] is not None:
-            if rsis[i] < 30: signal = "buy"
-            elif rsis[i] > 70: signal = "sell"
-        # Execute at candle close for this MVP; never use future candles.
-        if position and ((position["side"] == "long" and signal == "sell") or (position["side"] == "short" and signal == "buy")):
-            exit_price = candle["close"]
-            gross = (exit_price-position["entry"]) if position["side"] == "long" else (position["entry"]-exit_price)
-            net = gross - req.spread - req.commission_per_trade
-            balance += net
-            trades.append({"side": position["side"], "entry_time": position["time"], "entry": position["entry"],
-                           "exit_time": candle["time"], "exit": exit_price, "pnl": round(net, 6),
-                           "result": "win" if net > 0 else "loss" if net < 0 else "breakeven"})
-            position = None
-        if position is None and signal in ("buy", "sell"):
-            position = {"side": "long" if signal == "buy" else "short", "entry": candle["close"], "time": candle["time"]}
-        equity.append({"time": candle["time"], "equity": round(balance, 6)})
-        equity_peak = max(equity_peak, balance)
-        if equity_peak > 0: max_dd = max(max_dd, (equity_peak-balance)/equity_peak*100)
-    # Close remaining position at last candle to avoid hiding open PnL.
+    trades = []
+    position = None
+
+    peak = balance
+    max_drawdown = 0.0
+
+    risk_fraction = 0.01
+    stop_distance = max(req.spread * 3, 0.01)
+    target_distance = stop_distance * 2
+
+    for i in range(1, len(candles)):
+        candle = candles[i]
+        signal = 0
+
+        if req.strategy == "ema_crossover":
+            if (
+                fast[i] > slow[i]
+                and fast[i - 1] <= slow[i - 1]
+                and rsi_values[i] > 50
+            ):
+                signal = 1
+
+            elif (
+                fast[i] < slow[i]
+                and fast[i - 1] >= slow[i - 1]
+                and rsi_values[i] < 50
+            ):
+                signal = -1
+
+        elif req.strategy == "rsi":
+            if rsi_values[i] < 30:
+                signal = 1
+            elif rsi_values[i] > 70:
+                signal = -1
+
+        if position:
+            direction = position["direction"]
+            entry = position["entry"]
+            exit_price = None
+            reason = ""
+
+            if direction == 1:
+                if candle["low"] <= entry - stop_distance:
+                    exit_price = entry - stop_distance
+                    reason = "SL"
+                elif candle["high"] >= entry + target_distance:
+                    exit_price = entry + target_distance
+                    reason = "TP"
+            else:
+                if candle["high"] >= entry + stop_distance:
+                    exit_price = entry + stop_distance
+                    reason = "SL"
+                elif candle["low"] <= entry - target_distance:
+                    exit_price = entry - target_distance
+                    reason = "TP"
+
+            if exit_price is None and signal == -direction:
+                exit_price = candle["close"]
+                reason = "Signal"
+
+            if exit_price is not None:
+                pnl = (
+                    (exit_price - entry)
+                    * direction
+                    * position["units"]
+                )
+
+                pnl -= req.spread * position["units"]
+                pnl -= req.commission
+
+                balance += pnl
+
+                trades.append({
+                    "time": candle["time"],
+                    "direction": (
+                        "BUY" if direction == 1 else "SELL"
+                    ),
+                    "entry": round(entry, 5),
+                    "exit": round(exit_price, 5),
+                    "pnl": round(pnl, 2),
+                    "reason": reason,
+                })
+
+                position = None
+
+        if position is None and signal != 0:
+            units = (
+                balance * risk_fraction / stop_distance
+            )
+
+            position = {
+                "direction": signal,
+                "entry": candle["close"],
+                "units": units,
+            }
+
+        peak = max(peak, balance)
+
+        if peak > 0:
+            max_drawdown = max(
+                max_drawdown,
+                (peak - balance) / peak,
+            )
+
+        equity.append(round(balance, 2))
+
     if position:
-        last = candles[-1]
-        gross = (last["close"]-position["entry"]) if position["side"] == "long" else (position["entry"]-last["close"])
-        net = gross - req.spread - req.commission_per_trade
-        balance += net
-        trades.append({"side": position["side"], "entry_time": position["time"], "entry": position["entry"],
-                       "exit_time": last["time"], "exit": last["close"], "pnl": round(net, 6),
-                       "result": "win" if net > 0 else "loss" if net < 0 else "breakeven"})
-        if equity: equity[-1]["equity"] = round(balance, 6)
-    wins = sum(1 for t in trades if t["pnl"] > 0)
-    losses = sum(1 for t in trades if t["pnl"] < 0)
-    gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
-    gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
-    return {"initial_balance": req.initial_balance, "final_balance": round(balance, 6),
-            "net_profit": round(balance-req.initial_balance, 6),
-            "return_pct": round((balance/req.initial_balance-1)*100, 4),
-            "trades": len(trades), "wins": wins, "losses": losses,
-            "win_rate": round(wins/len(trades)*100, 2) if trades else 0,
-            "profit_factor": round(gross_profit/gross_loss, 4) if gross_loss else (None if gross_profit == 0 else "infinity"),
-            "max_drawdown_pct": round(max_dd, 3), "trades_detail": trades, "equity": equity,
-            "caveat": "MVP: ukuran posisi satu unit, spread/komisi sederhana, tanpa swap, slippage, margin, atau tick-level fill. Hasil bukan representasi pasti hasil broker."}
+        last_candle = candles[-1]
+        exit_price = last_candle["close"]
+
+        pnl = (
+            (exit_price - position["entry"])
+            * position["direction"]
+            * position["units"]
+        )
+
+        pnl -= req.spread * position["units"]
+        pnl -= req.commission
+        balance += pnl
+
+        trades.append({
+            "time": last_candle["time"],
+            "direction": (
+                "BUY"
+                if position["direction"] == 1
+                else "SELL"
+            ),
+            "entry": round(position["entry"], 5),
+            "exit": round(exit_price, 5),
+            "pnl": round(pnl, 2),
+            "reason": "End of data",
+        })
+
+    winners = [t for t in trades if t["pnl"] > 0]
+    losers = [t for t in trades if t["pnl"] < 0]
+
+    gross_profit = sum(t["pnl"] for t in winners)
+    gross_loss = abs(sum(t["pnl"] for t in losers))
+
+    net_profit = balance - req.initial_balance
+
+    return {
+        "symbol": req.symbol,
+        "interval": req.interval,
+        "strategy": req.strategy,
+        "source": "Twelve Data",
+        "candles": len(candles),
+        "initial_balance": round(req.initial_balance, 2),
+        "final_balance": round(balance, 2),
+        "net_profit": round(net_profit, 2),
+        "return_percent": round(
+            net_profit / req.initial_balance * 100,
+            2,
+        ),
+        "total_trades": len(trades),
+        "winning_trades": len(winners),
+        "losing_trades": len(losers),
+        "win_rate": round(
+            len(winners) / len(trades) * 100,
+            2,
+        ) if trades else 0,
+        "profit_factor": round(
+            gross_profit / gross_loss, 2
+        ) if gross_loss else None,
+        "max_drawdown_percent": round(
+            max_drawdown * 100, 2
+        ),
+        "equity": equity,
+        "trades": trades,
+        "note": (
+            "Hasil simulasi historis, bukan jaminan "
+            "hasil trading di masa depan."
+        ),
+    }
+
+
+# ==========================================
+# ENDPOINT BACKTEST
+# ==========================================
 
 @app.post("/api/backtest")
-async def backtest(req: BacktestRequest):
-    if req.symbol.strip().upper() not in SYMBOLS or req.interval not in INTERVALS:
-        raise HTTPException(400, "Simbol atau timeframe tidak didukung.")
+async def backtest(
+    req: BacktestRequest,
+    request: Request,
+):
     if req.start_date > req.end_date:
-        raise HTTPException(400, "Tanggal mulai harus sebelum atau sama dengan tanggal selesai.")
-    if req.strategy == "ema_crossover" and req.fast_ema >= req.slow_ema:
-        raise HTTPException(400, "EMA cepat harus lebih kecil daripada EMA lambat.")
-    data = await get_data(req.symbol, req.interval, req.start_date, req.end_date)
-    result = run_engine(req, data["candles"])
-    return {"request": req.model_dump(mode="json"), "data_summary": {k:data[k] for k in ("symbol","interval","start_date","end_date","count","invalid_rows_skipped","data_source")}, "result": result}
+        raise HTTPException(
+            status_code=400,
+            detail="Tanggal mulai harus sebelum tanggal akhir.",
+        )
 
-@app.post("/api/manual/trade")
-def manual_trade(payload: dict):
-    # Manual state is client-session only in this MVP; endpoint validates action shape.
-    action = payload.get("action")
-    if action not in {"buy", "sell", "close"}:
-        raise HTTPException(400, "Aksi harus buy, sell, atau close.")
-    return {"accepted": True, "action": action, "message": "Aksi valid. Versi MVP menyimpan jurnal manual di browser; belum ada penyimpanan akun lintas perangkat."}
+    data = await get_data(
+        request=request,
+        symbol=req.symbol,
+        interval=req.interval,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        outputsize=5000,
+    )
+
+    return run_engine(req, data["candles"])
+
+
+# ==========================================
+# FALLBACK UNTUK FILE FRONTEND
+# ==========================================
+
+@app.get("/{path:path}")
+async def frontend_assets(
+    path: str,
+    request: Request,
+):
+    if path.startswith("api/"):
+        raise HTTPException(
+            status_code=404,
+            detail="Endpoint API tidak ditemukan.",
+        )
+
+    return await fetch_asset(request, path)
+
+
+# WAJIB UNTUK CLOUDFLARE PYTHON WORKERS
 Default = asgi.entrypoint(app)
