@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from workers import asgi
 
 app = FastAPI(title="GoldLab Backtester", version="0.1.0")
 API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
