@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GoldLab Backtester</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<header><div class="brand"><span class="logo">GL</span><div><b>GoldLab</b><small>BACKTESTER</small></div></div><span class="pill">SIMULATION ONLY</span></header>
+<main>
+<section class="hero"><div><p class="eyebrow">STRATEGY LAB · FOREX & GOLD</p><h1>Uji strategi.<br><em>Jangan menebak.</em></h1><p class="muted">Backtest historis dengan data Twelve Data, grafik candle, dan laporan performa.</p></div><div class="hero-stat"><span>API STATUS</span><b id="apiStatus">Memeriksa…</b><small>API key tetap di backend</small></div></section>
+<section class="panel">
+<div class="section-title"><div><span class="step">01</span><h2>Pengaturan backtest</h2></div><span class="muted">Pilih data & aturan</span></div>
+<div class="form-grid">
+<label>Instrumen<select id="symbol"><option>XAU/USD</option><option>EUR/USD</option><option>GBP/USD</option><option>USD/JPY</option><option>AUD/USD</option><option>USD/CAD</option><option>NZD/USD</option><option>USD/CHF</option><option>EUR/JPY</option><option>GBP/JPY</option></select></label>
+<label>Timeframe<select id="interval"><option value="1min">M1</option><option value="5min" selected>M5</option><option value="15min">M15</option><option value="30min">M30</option><option value="1h">H1</option><option value="2h">H2</option><option value="4h">H4</option><option value="1day">D1</option></select></label>
+<label>Tanggal mulai<input id="start" type="date" value="2026-01-01"></label>
+<label>Tanggal selesai<input id="end" type="date" value="2026-01-31"></label>
+<label>Modal awal (USD)<input id="balance" type="number" min="1" value="1000"></label>
+<label>Strategi<select id="strategy"><option value="ema_crossover">EMA Crossover</option><option value="rsi">RSI Reversal</option></select></label>
+<label>EMA cepat<input id="fast" type="number" min="2" max="200" value="9"></label>
+<label>EMA lambat<input id="slow" type="number" min="3" max="500" value="21"></label>
+<label>RSI periode<input id="rsi" type="number" min="2" max="100" value="14"></label>
+<label>Spread sederhana (harga)<input id="spread" type="number" min="0" step="0.0001" value="0"></label>
+<label>Komisi per trade (USD)<input id="commission" type="number" min="0" step="0.01" value="0"></label>
+</div>
+<div class="actions"><button id="runBtn" class="primary">▶ Jalankan auto backtest</button><button id="loadBtn" class="secondary">Muat data & mode manual</button></div>
+<p id="status" class="status" role="status">Siap. Konfigurasikan periode lalu muat data.</p>
+</section>
+<section class="panel">
+<div class="section-title"><div><span class="step">02</span><h2>Grafik harga</h2></div><span id="candleCount" class="muted">Belum ada data</span></div>
+<div id="chart" aria-label="Grafik candlestick"></div>
+<div class="manual-controls"><button id="prevBtn" class="secondary" disabled>← Candle sebelumnya</button><button id="nextBtn" class="secondary" disabled>Candle berikutnya →</button><span id="replayLabel" class="muted">Mode manual belum dimuat</span></div>
+<div class="actions"><button data-action="buy" class="buy" disabled id="buyBtn">BUY</button><button data-action="sell" class="sell" disabled id="sellBtn">SELL</button><button data-action="close" class="secondary" disabled id="closeBtn">CLOSE</button><button id="exportManual" class="secondary" disabled>Ekspor jurnal CSV</button></div>
+<p class="muted small">Mode manual adalah simulasi edukasi. Tombol transaksi mencatat jurnal lokal pada browser ini; belum mengirim order broker.</p>
+</section>
+<section class="panel">
+<div class="section-title"><div><span class="step">03</span><h2>Hasil backtest</h2></div><button id="exportBtn" class="secondary" disabled>Ekspor trade CSV</button></div>
+<div class="metrics">
+<div class="metric"><span>Net profit</span><b id="netProfit">—</b></div><div class="metric"><span>Return</span><b id="returnPct">—</b></div><div class="metric"><span>Win rate</span><b id="winRate">—</b></div><div class="metric"><span>Max drawdown</span><b id="drawdown">—</b></div><div class="metric"><span>Profit factor</span><b id="profitFactor">—</b></div><div class="metric"><span>Total trades</span><b id="tradeCount">—</b></div>
+</div>
+<div id="equityChart"></div><div class="table-wrap"><table><thead><tr><th>Sisi</th><th>Entry</th><th>Harga masuk</th><th>Exit</th><th>Harga keluar</th><th>P/L</th><th>Hasil</th></tr></thead><tbody id="tradesBody"><tr><td colspan="7" class="muted">Belum ada hasil.</td></tr></tbody></table></div>
+<p id="caveat" class="muted small"></p>
+</section>
+<footer>GoldLab Backtester · Tidak mengirim order nyata · Data dan akses bergantung pada paket Twelve Data.</footer>
+</main><script src="/static/app.js"></script>
+</body></html>
