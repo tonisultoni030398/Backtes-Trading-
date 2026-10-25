@@ -1,0 +1,13 @@
+
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "goldlab-backtester",
+  "main": "app/Static/main.py",
+  "compatibility_date": "2026-10-25",
+  "compatibility_flags": ["python_workers"],
+  "assets": {
+    "directory": "./app/Static/",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+}
