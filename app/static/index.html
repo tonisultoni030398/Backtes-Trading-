@@ -13,7 +13,34 @@
 <section class="panel">
 <div class="section-title"><div><span class="step">01</span><h2>Pengaturan backtest</h2></div><span class="muted">Pilih data & aturan</span></div>
 <div class="form-grid">
-<label>Instrumen<select id="symbol"><option>XAU/USD</option><option>EUR/USD</option><option>GBP/USD</option><option>USD/JPY</option><option>AUD/USD</option><option>USD/CAD</option><option>NZD/USD</option><option>USD/CHF</option><option>EUR/JPY</option><option>GBP/JPY</option></select></label>
+<label>Instrumen 
+<select id="symbol">
+  <optgroup label="Forex mayor">
+    <option value="EUR/USD">EUR/USD</option>
+    <option value="GBP/USD">GBP/USD</option>
+    <option value="USD/JPY">USD/JPY</option>
+    <option value="USD/CHF">USD/CHF</option>
+    <option value="AUD/USD">AUD/USD</option>
+    <option value="USD/CAD">USD/CAD</option>
+    <option value="NZD/USD">NZD/USD</option>
+    <option value="EUR/JPY">EUR/JPY</option>
+    <option value="GBP/JPY">GBP/JPY</option>
+    <option value="EUR/GBP">EUR/GBP</option>
+  </optgroup>
+  <optgroup label="Logam">
+    <option value="XAU/USD" selected>XAU/USD · Gold</option>
+    <option value="XAG/USD">XAG/USD · Silver</option>
+  </optgroup>
+  <optgroup label="Crypto">
+    <option value="BTC/USD">BTC/USD</option>
+    <option value="ETH/USD">ETH/USD</option>
+    <option value="BTC/USDT">BTC/USDT</option>
+    <option value="ETH/USDT">ETH/USDT</option>
+    <option value="SOL/USD">SOL/USD</option>
+    <option value="XRP/USD">XRP/USD</option>
+  </optgroup>
+    </select>
+ </label>
 <label>Timeframe<select id="interval"><option value="1min">M1</option><option value="5min" selected>M5</option><option value="15min">M15</option><option value="30min">M30</option><option value="1h">H1</option><option value="2h">H2</option><option value="4h">H4</option><option value="1day">D1</option></select></label>
 <label>Tanggal mulai<input id="start" type="date" value="2026-01-01"></label>
 <label>Tanggal selesai<input id="end" type="date" value="2026-01-31"></label>
